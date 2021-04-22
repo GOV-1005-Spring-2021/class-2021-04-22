@@ -23,4 +23,89 @@ x <- read_rds("pa.rds")
 *What sort of model should you estimate to determine who to send out postcards to if your goal is send them out to people who are most likely to vote? Who do you send out the cards to? How sure are you about what will happen? Temperance!*
 
 
+```{r fit_1, cache = TRUE}
+# We want to include the interaction between the treatment and all the other
+# covariates. After all, the implication of the questions is that the importance
+# of different treatments varies across different categories of people. If that
+# were not true, it would not matter who we sent the cards to.
 
+fit_1 <- stan_glm(voted_2020_primary ~ treat*vote_history + treat*party + treat*sex + treat*age_bin,
+                  data = x,
+                  refresh = 0,
+                  seed = 54)
+```
+
+```{r show_fit}
+# Complex models have so many parameters that it is not really useful to try and
+# interpret them all. Moreover, we don't really care about parameters! We care
+# about things we can see in the world, like will person X vote in the next
+# election.
+
+print(fit_1, digits = 4)
+```
+
+```{r newobs}
+# It is a both to type in the values of all the covariates ourselves. And it is
+# easy to make mistakes! The unique() trick makes that unnecessary.
+
+party <- unique(x$party)
+sex <- unique(x$sex)
+treat <- unique(x$treat)
+vote_history <- unique(x$vote_history)
+age_bin <- unique(x$age_bin)
+
+newobs <- expand_grid(party, sex, treat, vote_history, age_bin)
+```
+
+```{r fitted}
+# Again, if we were interested in a causal effect, we could not use
+# tidybayes::add_fitted_draws(). We would have no choice but to do things the
+# slow way --- with posterior_epred(), pivot_longer() and so on --- because we
+# would need to manipulate the posteriors. But, for this question, we are
+# treating the model as descriptive rather than causal. So, we can do things the
+# easy way.
+
+z <- add_fitted_draws(newobs, fit_1)
+```
+
+
+```{r}
+# Look at the 3.6 million rows. Big data! There are 900 different categories of
+# people. For each categories, we want to know the probability of them voting.
+# If we had the ideal Preceptor Table --- including rows for the election next
+# month --- this would be trivial to calculate. But we don't have that. So, we
+# create 4,000 draws from each of the posteriors for the 900 categories of
+# people. 4,000 times 900 is 3.6 million.
+
+# But we can't plot 900 posteriors! We need to pick out the ones which are most
+# relevant to our question. In this case, we want posterior with large average
+# (or median) values. Those are the categories of people most likely to vote.
+
+z %>% 
+  group_by(party, sex, treat, vote_history, age_bin) %>% 
+  summarize(avg = median(.value)) %>% 
+  arrange(desc(avg))
+```
+
+
+
+
+```{r plot}
+# Now that we know which categories are most likely to vote, we can filter down
+# the 900 posteriors to a more manageable number, and then plot those.
+
+z %>% 
+  filter(sex == "F", party == "Democrat", vote_history == "Municipal Primary Voter") %>% 
+  ggplot(aes(x = .value,
+             y = age_bin,
+             fill = treat)) +
+
+  stat_slab(alpha = 0.5) +
+  labs(title = "Voting Probability by Age and Treatment",
+       subtitle = "Focus on female, democrats who vote in municipal primaries",
+       x = "Expected Probability of Voting",
+       y = "Age",
+       caption = "Source: Hopkins et al (2021)") +
+  scale_x_continuous(labels = scales::percent_format(accuracy = 1))
+  
+```
